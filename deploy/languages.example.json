@@ -1,0 +1,17 @@
+[
+  {
+    "name": "python",
+    "version": "3.13",
+    "image": "runbox/python:3.13",
+    "file_name": "main.py",
+    "command": "python3 -I -B /workspace/main.py"
+  },
+  {
+    "name": "ruby",
+    "version": "3.3",
+    "image": "ruby:3.3-alpine",
+    "file_name": "main.rb",
+    "command": "ruby /workspace/main.rb",
+    "env": ["GEM_HOME=/tmp/gems"]
+  }
+]

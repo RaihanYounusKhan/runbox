@@ -1,0 +1,79 @@
+# Local stack: Postgres, API, one worker, Prometheus and Grafana.
+#
+#   make images   # build the sandbox images on your Docker host (once)
+#   make up       # start everything
+#   make key      # create an API key
+#
+# The worker creates sandbox containers through the host's Docker socket.
+# Job files are bind-mounted into those containers by the *host* daemon, so
+# the jobs directory must have the same path inside the worker container and
+# on the host (RUNBOX_JOBS_DIR, default /tmp/runbox-jobs, which Docker
+# Desktop shares by default).
+
+x-db-url: &db-url postgres://runbox:runbox@postgres:5432/runbox?sslmode=disable
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: runbox
+      POSTGRES_PASSWORD: runbox
+      POSTGRES_DB: runbox
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U runbox"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  api:
+    build: { context: ., target: api }
+    environment:
+      DATABASE_URL: *db-url
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-token-change-me}
+      LISTEN_ADDR: ":8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  worker:
+    build: { context: ., target: worker }
+    environment:
+      DATABASE_URL: *db-url
+      WORKER_ID: worker-1
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      JOBS_DIR: ${RUNBOX_JOBS_DIR:-/tmp/runbox-jobs}
+      # CONTAINER_RUNTIME: runsc   # uncomment if gVisor is installed on the host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${RUNBOX_JOBS_DIR:-/tmp/runbox-jobs}:${RUNBOX_JOBS_DIR:-/tmp/runbox-jobs}
+    depends_on:
+      api: { condition: service_healthy } # API runs migrations
+    stop_grace_period: 40s # > SHUTDOWN_GRACE, so in-flight jobs can finish
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on: [prometheus]
+
+volumes:
+  pgdata:
